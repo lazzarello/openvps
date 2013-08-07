@@ -1,0 +1,43 @@
+#
+# Copyright 2004 OpenHosting, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# $Id: Makefile.in,v 1.22 2007/06/07 18:32:34 grisha Exp $
+
+INSTALL=@INSTALL@
+SBINDIR=@prefix@/sbin
+
+clean:
+	rm -rf *~
+
+distclean: clean
+	rm -f Makefile
+
+install: 
+	$(INSTALL) -m 0550 ovdisk $(DESTDIR)$(SBINDIR)/ovdisk
+	$(INSTALL) -m 0550 ovbackup $(DESTDIR)$(SBINDIR)/ovbackup
+	$(INSTALL) -m 0550 openvps $(DESTDIR)$(SBINDIR)/openvps
+	$(INSTALL) -m 0500 ovgenkey $(DESTDIR)$(SBINDIR)/ovgenkey
+	$(INSTALL) -m 0550 openvps-configure $(DESTDIR)$(SBINDIR)/openvps-configure
+	$(INSTALL) -m 0550 openvps-mon $(DESTDIR)$(SBINDIR)/openvps-mon
+	$(INSTALL) -m 0550 ovcheckproc $(DESTDIR)$(SBINDIR)/ovcheckproc
+	$(INSTALL) -m 0550 ovuserfiles $(DESTDIR)$(SBINDIR)/ovuserfiles
+	$(INSTALL) -m 0550 ovraidcheck $(DESTDIR)$(SBINDIR)/ovraidcheck
+	$(INSTALL) -m 0550 ovcleanrebuilds $(DESTDIR)$(SBINDIR)/ovcleanrebuilds
+	$(INSTALL) -m 0550 ssh-pass $(DESTDIR)$(SBINDIR)/ssh-pass
+# XXX this shouldn't be hard-coded
+	$(INSTALL) -m 0550 pre-start $(DESTDIR)/etc/vservers/.defaults/scripts/pre-start.d/openvps
+	$(INSTALL) -m 0550 prepre-start $(DESTDIR)/etc/vservers/.defaults/scripts/prepre-start.d/openvps
+	$(INSTALL) -m 0550 postpost-stop $(DESTDIR)/etc/vservers/.defaults/scripts/postpost-stop.d/openvps

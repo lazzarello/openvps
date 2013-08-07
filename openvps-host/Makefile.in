@@ -1,0 +1,105 @@
+#
+# Copyright 2004 OpenHosting, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# $Id: Makefile.in,v 1.18 2005/01/20 19:49:34 grisha Exp $
+
+INSTALL=@INSTALL@
+SBINDIR=@prefix@/sbin
+MISC=@prefix@/openvps/misc
+TMPL=@prefix@/openvps/templates
+OLD_VARDB=/var/db/oh
+VARDB=/var/db/openvps
+BACKUP=/backup
+CONFIG=/etc/openvps.conf
+VERSION=version.txt
+
+all:
+	cd ohd && $(MAKE)
+	cd src && $(MAKE)
+
+install:
+	$(INSTALL) -d $(DESTDIR)$(SBINDIR)
+	$(INSTALL) -d $(DESTDIR)$(MISC)
+	$(INSTALL) -d $(DESTDIR)$(TMPL)
+	@if test ! -e $(DESTDIR)$(OLD_VARDB) ; then \
+		$(INSTALL) -d $(DESTDIR)$(OLD_VARDB); \
+	fi
+	@if test ! -e $(DESTDIR)$(VARDB) ; then \
+		$(INSTALL) -d $(DESTDIR)$(VARDB); \
+	fi
+	@if test ! -e $(DESTDIR)$(VARDB)/vsmon ; then \
+		$(INSTALL) -d $(DESTDIR)$(VARDB)/vsmon; \
+	fi
+	@if test ! -e $(DESTDIR)$(VARDB)/disklimits ; then \
+		$(INSTALL) -d $(DESTDIR)$(VARDB)/disklimits; \
+	fi
+	cd scripts && $(MAKE) install
+	@$(MAKE) install_py_lib
+	@$(MAKE) install_vspython
+	cd rhinit && $(MAKE) install
+	cd crontab && $(MAKE) install
+	cd src && $(MAKE) install
+	cd www && $(MAKE) install
+	cd ohd && $(MAKE) install
+	@if test ! -e $(DESTDIR)$(CONFIG) ; then \
+		$(INSTALL) openvps.conf $(DESTDIR)$(CONFIG); \
+	else \
+		echo "Not installing $(DESTDIR)$(CONFIG) because it already exists."; \
+	fi
+	$(INSTALL) $(VERSION) $(DESTDIR)/etc/openvps-release
+
+install_py_lib:
+	if test -z "$(DESTDIR)"; then \
+		cd lib/python && @PYTHON@ setup.py install; \
+	else \
+		cd lib/python && @PYTHON@ setup.py install --root $(DESTDIR); \
+	fi
+
+install_vspython:
+	if test -z "$(DESTDIR)"; then \
+		cd vspython && @PYTHON@ setup.py install; \
+	else \
+		cd vspython && @PYTHON@ setup.py install --root $(DESTDIR); \
+	fi
+
+clean:
+	cd ohd && $(MAKE) clean
+	cd scripts && $(MAKE) clean
+	cd rhinit && $(MAKE) clean
+	cd src && $(MAKE) clean
+	cd crontab && $(MAKE) clean
+	rm -rf *~ lib/python/oh/host/*.pyc lib/python/oh/host/*.pyo lib/python/oh/host/*~ lib/python/build
+
+distclean: clean
+	cd scripts && $(MAKE) distclean
+	cd rhinit && $(MAKE) distclean
+	cd src && $(MAKE) distclean
+	cd crontab && $(MAKE) distclean
+	rm -rf Makefile config.h config.status config.cache config.log \
+		autom4te.cache
+spec:
+	. ./mkspec > openvps-host.spec
+
+rpm: spec
+	VERSION=`cat version.txt` ; \
+	PROPERNAME="openvps-host-$$VERSION" ; \
+	OURDIR=`pwd` ; \
+	cd .. ; \
+	rm /var/tmp/$$PROPERNAME; \
+	ln -sf $$OURDIR /var/tmp/$$PROPERNAME; \
+	cd /var/tmp ; \
+	tar -czv --exclude CVS -f $$PROPERNAME.tgz $$PROPERNAME/. ; \
+	rpmbuild -tb /var/tmp/$$PROPERNAME.tgz

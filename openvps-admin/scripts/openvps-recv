@@ -1,0 +1,614 @@
+#!/usr/bin/env python
+
+#
+# Copyright 2004 OpenHosting, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# $Id: openvps-recv,v 1.25 2006/02/17 15:26:00 grisha Exp $
+
+# This is a daemon script that runs in the background, collects
+# datapoints ....
+
+# the daemonization stuff is from recipe 66012 on ASPN with some
+# enhancements
+
+import os
+import sys
+import signal
+import time
+import socket
+import traceback
+import syslog
+from signal import SIGTERM, SIGKILL
+from exceptions import ImportError
+
+import hmac
+import marshal
+
+from email.MIMEText import MIMEText
+import smtplib
+
+# openvps modules
+from openvps.admin import cfg
+
+def log(data):
+   syslog.openlog('openvps-recv')
+   syslog.syslog('%s' % data)
+   syslog.closelog()
+
+# alertdb (if present)
+alertdb = None
+try:
+   import alertdb
+except ImportError:
+   pass
+
+if cfg.ALERT_DBNAME:
+
+   if alertdb:
+      # initialize alert server connection
+      alertdb.alert_server_open(server=cfg.ALERT_HOST, user=cfg.ALERT_USER,
+                                passwd=cfg.ALERT_PASSWD, dbname=cfg.ALERT_DBNAME)
+   else:
+      log('WARNING: ALERT_DBNAME specified, but alertdb not installed')
+
+EXIT = 0
+
+HB = {}
+KNOWN = {}
+
+def exit_handler(signum, frame):
+   global EXIT
+   log('Received SIGTERM.')
+   EXIT = 1
+                   
+def daemonize(pidfile=None):
+   """
+      Detach a process from the controlling terminal and run it in the
+      background as a daemon.
+   """
+
+   log('Starting...')
+
+   # make sure we can write the pid file
+   if pidfile:
+      file(pidfile,'w+').write("\n")
+      os.unlink(pidfile)
+   
+   try:
+      # Fork a child process so the parent can exit.
+      pid = os.fork()
+   except OSError, e:
+      log('Could not start: %s %s' % (e.errno, e.strerror))
+      sys.exit(1)
+   
+   if (pid == 0):       # The first child.
+      
+      # Next we call os.setsid() to become the session leader of this new
+      # session.
+      os.setsid()
+
+      # When the first child terminates, all processes in the second child
+      # are sent a SIGHUP, so it's ignored.
+      signal.signal(signal.SIGHUP, signal.SIG_IGN)
+      
+      try:
+         # Fork a second child to prevent zombies.
+         pid = os.fork()        # Fork a second child.
+      except OSError, e:
+         log('Could not start: %s %s' % (e.errno, e.strerror))
+      
+      if (pid == 0):      # The second child.
+         # Ensure that the daemon doesn't keep any directory in use.
+         os.chdir("/")
+         # Give the child complete control over permissions.
+         os.umask(0)
+      else:
+         os._exit(0)      # Exit parent (the first child) of the second child.
+   else:
+      os._exit(0)         # Exit parent of the first child.
+
+   # Close all open files.
+   try:
+      maxfd = os.sysconf("SC_OPEN_MAX")
+   except (AttributeError, ValueError):
+      maxfd = 256       # default maximum
+
+   for fd in range(0, maxfd):
+      try:
+         os.close(fd)
+      except OSError:   # ERROR (ignore)
+         pass
+
+   # Redirect the standard file descriptors to /dev/null.
+   os.open("/dev/null", os.O_RDONLY) 
+   os.open("/dev/null", os.O_RDWR)
+   os.open("/dev/null", os.O_RDWR)
+
+   # register signal handler
+   signal.signal(SIGTERM, exit_handler)
+
+   # write our pid file
+   if pidfile:
+      file(pidfile,'w+').write("%s\n" % os.getpid())
+
+def startstop(pidfile='%s.pid' % os.path.basename(sys.argv[0])):
+
+   # turn pid into full path
+   pidfile = os.path.abspath(pidfile)
+   
+   if len(sys.argv) > 1:
+      
+      action = sys.argv[1]
+
+      # is there a pid file?
+      try:
+         pf  = file(pidfile,'r')
+         pid = int(pf.read().strip())
+         pf.close()
+      except IOError:
+         pid = None
+         
+      if 'stop' == action or 'restart' == action:
+
+         # start or restart without pid
+         if not pid:
+
+            print >> sys.stderr, "Could not stop, pid file '%s' missing." % pidfile
+
+            if 'stop' == action:
+               # we're done
+               sys.exit(1)
+               
+            action = 'start'
+            pid = None
+            
+         else:
+
+            # we have a pid file
+            try:
+
+               # keep on killing for X seconds
+               X = 5
+               for x in xrange(X):
+                  os.kill(pid, SIGTERM)
+                  time.sleep(1)
+
+               # now really kill
+               print >> sys.stderr, "%d SIGTERMs did not kill it, switching to SIGKILL" % X
+               for x in xrange(3):
+                  os.kill(pid, SIGKILL)
+                  time.sleep(1)
+
+               print >> sys.stderr, "Process still running, we give up!"
+               sys.exit(1)
+                  
+            except OSError, err:
+               err = str(err)
+               if err.find("No such process") > 0:
+                  # kill succeeded
+                  os.remove(pidfile)
+                  if 'stop' == action:
+                     sys.exit(0)
+                  action = 'start'
+                  pid = None
+
+               else:
+                  # some other error?
+                  print >> sys.stderr, str(err)
+                  sys.exit(1)
+                  
+      if 'start' == action:
+         if pid:
+            print >> sys.stderr, "NOT starting because pid file '%s' exists." % pidfile
+            sys.exit(1)
+            
+         daemonize(pidfile=pidfile)
+         log('Started.')
+         if alertdb:
+            alertdb.send_alert(':openvps-recv:start', severity=alertdb.SEV_CLEAR,
+                               text='openvps-recv started')
+         return
+
+   print "usage: %s start|stop|restart" % sys.argv[0]
+   sys.exit(2)
+
+
+def work():
+
+   try:
+      do_work()
+   except:
+      etype, evalue, etb = sys.exc_info()
+
+      # write to log
+      for e in traceback.format_exception(etype, evalue, etb):
+         log(e[:-1])
+      
+   log('Exiting...')
+   if alertdb:
+      alertdb.send_alert(':openvps-recv:exit', severity=alertdb.SEV_CRIT,
+                         text='openvps-recv exited')
+   sys.exit(1)
+
+KEYS = [x[0] for x in cfg.MON_DATA_DEF]
+
+def decode(data):
+
+   sig, data = data[:16], data[16:]
+   our_sig = hmac.new(cfg.MON_SECRET, data).digest()
+
+   if sig != our_sig:
+      # abort!
+      return None
+
+   list = marshal.loads(data)
+
+   if len(list) == 3:
+      # this is a special command packet
+      # return it as is
+      return list
+
+   result = {}
+   for n in xrange(len(KEYS)):
+      if n < len(list) and list[n] is not None:
+         result[KEYS[n]] = list[n]
+      else:
+         result[KEYS[n]] = 'U'
+         
+   return result
+
+
+# create our RRD
+
+import RRD
+
+def DS(name, dst, hbeat, min='U', max='U'):
+    return 'DS:%s:%s:%s:%s:%s' % (name, dst.upper(), hbeat, min, max)
+
+def RRA(cf, xff, steps, rows):
+    return 'RRA:%s:%s:%s:%s' % (cf.upper(), xff, steps, rows)
+
+def rrd_exists(name):
+   path = os.path.join(cfg.VAR_DB_OPENVPS, name+'.rrd')
+   return os.path.exists(path)
+
+
+def create_rrd(name):
+
+   path = os.path.join(cfg.VAR_DB_OPENVPS, name+'.rrd')
+
+   args = [path, '-s', '60']
+
+   for n in xrange(len(cfg.MON_DATA_DEF)):
+      field = cfg.MON_DATA_DEF[n]
+      if field[1]:
+         args.append(DS(field[0][:19], dst=field[1], hbeat=field[2], min=field[3], max=field[4]))
+        
+   args.append(RRA('AVERAGE', xff=0.5, steps=1, rows=120))
+   args.append(RRA('AVERAGE', xff=0.5, steps=5, rows=300))
+   args.append(RRA('AVERAGE', xff=0.5, steps=30, rows=400))
+   args.append(RRA('AVERAGE', xff=0.5, steps=450, rows=300))
+   args.append(RRA('AVERAGE', xff=0.5, steps=2160, rows=300))
+   args.append(RRA('AVERAGE', xff=0.5, steps=43200, rows=120))
+
+   #log(`args`)
+
+   RRD.create(args)
+
+
+def uptime_rrd_exists(name):
+   path = os.path.join(cfg.VAR_DB_OPENVPS, name+'-uptime.rrd')
+   return os.path.exists(path)
+
+
+def create_uptime_rrd(name):
+
+   path = os.path.join(cfg.VAR_DB_OPENVPS, name+'-uptime.rrd')
+
+   args = [path, '-s', '60']
+
+   args.append(DS('uptime', dst='gauge', hbeat=300, min=0, max=100))
+   args.append(DS('admin_uptime', dst='gauge', hbeat=300, min=0, max=100))
+
+   # for uptime we use a slightly more detailed RRD
+
+   args.append(RRA('AVERAGE', xff=0.5, steps=1, rows=120))         # 2   hours of 1 min
+   args.append(RRA('AVERAGE', xff=0.5, steps=5, rows=3000))        # 10   day of 5 min
+   args.append(RRA('AVERAGE', xff=0.5, steps=30, rows=1600))       # 33 days of 30 min
+   args.append(RRA('AVERAGE', xff=0.5, steps=450, rows=300))       # 93  days of 7.5 hr
+   args.append(RRA('AVERAGE', xff=0.5, steps=2160, rows=300))
+   args.append(RRA('AVERAGE', xff=0.5, steps=43200, rows=120))
+
+   #log(`args`)
+
+   RRD.create(args)
+
+def update_rrd(name, data):
+
+    # template
+    tmpl = []
+    for k in cfg.MON_DATA_DEF:
+        if k[1]:
+           tmpl.append(k[0][:19])
+
+    vals = ['N']
+    for k in cfg.MON_DATA_DEF:
+        if k[1]:
+            vals.append('%s' % data[k[0]])
+
+    path = os.path.join(cfg.VAR_DB_OPENVPS, name+'.rrd')
+    args = [path, '-t'] + [':'.join(tmpl)] + [':'.join(vals)]
+
+    #log(`args`)
+    try:
+       RRD.update(args)
+    except ValueError, e:
+       log('WARNING: RRD update failed (%s): %s' % (e, `args`))
+       if alertdb:
+          alertdb.send_alert(':openvps-recv:rrdup', severity=alertdb.SEV_CRIT,
+                             text='%s RRD update failed, see syslog' % sys.argv[0])
+
+def update_uptime_rrd(name, up, admin_up):
+
+    tmpl = 'uptime:admin_uptime'
+    vals = 'N:%d:%d' % (up, admin_up)
+
+    path = os.path.join(cfg.VAR_DB_OPENVPS, name+'-uptime.rrd')
+    args = [path, '-t', tmpl, vals]
+
+    #log(`args`)
+    try:
+       RRD.update(args)
+    except ValueError, e:
+       log('WARNING: RRD update failed (%s): %s' % (e, `args`))
+       if alertdb:
+          alertdb.send_alert(':openvps-recv:rrdup', severity=alertdb.SEV_CRIT,
+                             text='%s RRD update failed, see syslog' % sys.argv[0])
+
+def update_heartbeat(name):
+
+   global HB
+
+   if HB.has_key(name) and not HB[name][4]:
+
+      # if there is err_cnt above, jump to else and start over
+
+      last_time, count, total_dur, avg, err_cnt, admin_down = HB[name]
+
+      now = time.time()
+      count += 1L
+
+      if count < 10000:
+         # if count is > 10000, no point
+         # in updating the average
+         total_dur += (now - last_time)
+         avg = total_dur/count
+
+      HB[name] = [now, count, total_dur, avg, 0, False]
+         
+   else:
+      log('New HB entry started for %s' % name)
+      if alertdb:
+         alertdb.send_alert(':openvps-recv:%s:newhb' % name, severity=alertdb.SEV_CLEAR,
+                            text='new HB entry started for %s' % name)
+
+      HB[name] = [time.time(), 0, 0, 0, 0, False]
+
+   #log('HEARTBEAT %s: %s' % (name, `HB[name]`))
+
+
+def email_notify(name, text):
+
+   if cfg.NOTIFY_EMAIL:
+
+       msg = MIMEText(text)
+       msg['Subject'] = "%s is DOWN" % name
+       msg['From'] = 'openvps-recv Daemon <%s>' % cfg.NOTIFY_FROM
+       msg['to'] = ', '.join(cfg.NOTIFY_EMAIL)
+
+       s = smtplib.SMTP()
+       s.connect()
+       s.sendmail(cfg.NOTIFY_FROM, cfg.NOTIFY_EMAIL, msg.as_string())
+       s.close()
+
+       log("Email sent to %s" % cfg.NOTIFY_EMAIL)
+
+
+LAST_HB_CHECK = 0
+
+def check_heartbeats():
+
+   # do we have anyone that we have not heard from
+   # for longer than 3x the average?
+
+   global HB
+   global LAST_HB_CHECK
+
+   # pace heartbeat checks to no more than once per 10 secs
+   if (time.time() - LAST_HB_CHECK) < 10:
+      return
+   else:
+      LAST_HB_CHECK = time.time()
+
+   MAX = 5 # 5 times the average is considered down
+   MAX_ERR = 1 # number of notifications
+
+   for key in HB.keys():
+
+      last_time, count, total_dur, avg, err_cnt, admin_down = HB[key]
+
+      if count > 2: # anything less does not give a meaningful average
+
+         now = time.time()
+
+         if not admin_down and ((time.time() - last_time) / avg > MAX):
+
+            # it's been so long, it's down
+
+            if admin_down:
+               # we're down, but intentionally
+               update_uptime_rrd(key, 0, 100)
+            else:
+               # we're down unintentionally
+               update_uptime_rrd(key, 0, 0)
+
+            # send a notification
+
+            if err_cnt < MAX_ERR:
+               # but not if the max number of e-mails was sent
+
+               text = "I have not heard from %s for %s seconds" % (key, time.time()-last_time)
+               
+               log(text)
+
+               if alertdb:
+                  alertdb.send_alert(key+':heartbeat', severity=alertdb.SEV_CRIT,
+                                     text=text, node_name=key)
+                  
+               email_notify(key, text)
+               
+               HB[key] = [last_time, count, total_dur, avg, err_cnt+1, admin_down]
+   
+
+def update_known_hosts(host):
+
+   global KNOWN
+
+   if not KNOWN.has_key(host):
+
+      known_hosts = os.path.join(cfg.VAR_DB_OPENVPS, 'known-hosts')
+      now = time.localtime()
+      open(known_hosts, 'a').write('%s %s\n' % (host, time.strftime('%Y-%m-%d %H:%M:%S', now)))
+
+      KNOWN[host] = now
+
+def read_known_hosts():
+
+   # read in a file of known hosts. the purpose of this
+   # file is to keep a time on when we ever heard first from
+   # this host
+   
+   global KNOWN
+
+   known_hosts = os.path.join(cfg.VAR_DB_OPENVPS, 'known-hosts')
+   if os.path.exists(known_hosts):
+      lines = open(known_hosts).readlines()
+
+      for line in lines:
+
+         host, host_time = line.strip().split(None, 1)
+         KNOWN[host] = time.strptime(host_time, '%Y-%m-%d %H:%M:%S')
+
+
+def do_work():
+
+   global EXIT
+
+   udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+   udp_sock.settimeout(10.0)
+   udp_sock.bind(('0.0.0.0', cfg.MON_TARGET_PORT))
+
+   read_known_hosts()
+
+   while 1:
+
+      try:
+         data, addr = udp_sock.recvfrom(1024)
+      except socket.timeout:
+         # if there is nothing coming in, this will kick in and still
+         # continue checking heartbeats
+         check_heartbeats()
+         continue
+      
+      decoded = decode(data)
+
+      if not decoded:
+         log('Invalid data received from %s : %s' % (addr[0], `data`))
+         if alertdb:
+            alertdb.send_alert(':openvps-recv:%s:baddata' % addr[0], severity=alertdb.SEV_CRIT, 
+                               text='openvps-recv: invalid data received from %s, see syslog' % addr[0])
+      else:
+         #log('Received from %s : %s' % (addr[0], `decoded`))
+         data = decoded
+
+         # is this a command packet?
+         if len(data) == 3:
+
+            name =  data[0]
+
+            if data[1] == cfg.MON_CMD_ADMIN_DOWN:
+
+               # delete the entry for this host, thereby disabling the
+               # heartbeat check
+
+               global HB
+               if HB.has_key(name):
+                  HB[name][5] = True # administratively down
+
+               log('Received MON_CMD_ADMIN_DOWN from %s.' % name)
+               if alertdb:
+                  alertdb.send_alert(':openvps-recv:%s:admindown' % addr[0], severity=alertdb.SEV_WARN, 
+                                     text='openvps-recv received MON_CMD_ADMIN_DOWN from %s' % name)
+
+         else:
+
+            name =  data['hostname']
+
+            if not rrd_exists(name):
+               create_rrd(name)
+
+            if not uptime_rrd_exists(name):
+               create_uptime_rrd(name)
+
+            update_rrd(name, data)
+
+            update_known_hosts(name)
+
+            update_uptime_rrd(name, 100, 100) # fully up
+            update_heartbeat(name)
+
+            check_heartbeats()
+         
+      if EXIT:
+         return
+
+if __name__ == "__main__":
+
+   try:
+      startstop(pidfile=cfg.MON_PID_FILE)
+   except IOError:
+      etype, evalue, etb = sys.exc_info()
+
+      # write to log
+      for e in traceback.format_exception(etype, evalue, etb):
+         log(e[:-1])
+      
+      log('Exiting...')
+      if alertdb:
+         alertdb.send_alert(':openvps-recv:exit', severity=alertdb.SEV_MAJOR, 
+                            text='openvps-recv exited')
+      sys.exit(1)
+
+   # start working
+   work()
+   
+      
+###
+# do not edit this if you like using emacs
+# makes emacs go into python mode
+### Local Variables:
+### mode:python
+### End:

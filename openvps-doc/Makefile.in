@@ -1,0 +1,154 @@
+
+# $Id: Makefile.in,v 1.2 2004/11/15 22:08:24 grisha Exp $
+
+# This file requires Python sources which contain the tools
+# generate Python-style documentation. The good is that it
+# looks classy and easily generates pdf, ps or HTML. The bad
+# is that it is based on LaTeX and is therefore a PITA to
+# to write. IMHO the good outweighs the bad at the moment.
+
+# You need to set this manually
+PYTHON_SRC=
+
+# names of the downloadable tarballs.
+# XXX this needs fixing
+RELEASE=	X.X
+
+MKHOWTO=	$(PYTHON_SRC)/Doc/tools/mkhowto
+
+# These must be declared phony since there
+# are directories with matching names:
+.PHONY: html
+
+# This can be changed to a4
+PAPER=		letter
+
+MPFILES=	openvps.tex \
+		copyright.tex \
+#		introduction.tex 
+#		appendixa.tex 
+
+
+# this target pukes if we don't have PYTHON_SRC set
+src_set:
+	@if test -z "$(PYTHON_SRC)"; then \
+		echo; \
+		echo "Please edit Makefile and set PYTHON_SRC to where Python sources are."; \
+		echo; \
+		exit 1; \
+	fi
+
+# Main target
+all:	pdf
+
+dvi:	$(MPFILES) src_set
+	$(MKHOWTO) --dvi openvps.tex
+
+pdf:	$(MPFILES) src_set
+	$(MKHOWTO) --pdf --$(PAPER) openvps.tex
+
+ps:	$(MPFILES) src_set
+	$(MKHOWTO) --ps --$(PAPER) openvps.tex
+
+html:	$(MPFILES) src_set
+	$(MKHOWTO) --html openvps.tex
+	mkdir -p openvps/icons
+	cp $(PYTHON_SRC)/Doc/html/icons/* openvps/icons/
+	rm -f openvps/openvps.how
+# the iconserver option of mkhowto is broken since it writes
+# it to the end if the init_file where they aren't useful anymore,
+# so we work around it:
+	for f in `find openvps -type f`; do \
+	  cat $$f | sed s/\.\.\\/icons/icons/g > $${f}2; \
+	  mv $${f}2 $$f; \
+	done
+
+world:	ps pdf html tarballs
+
+# Release packaging targets:
+
+pdf-$(PAPER)-$(RELEASE).tgz: pdf
+	tar cf - *.pdf | gzip -9 >$@
+
+pdf-$(PAPER)-$(RELEASE).tar.bz2: pdf
+	tar cf - *.pdf | bzip2 -9 >$@
+
+pdf-$(PAPER)-$(RELEASE).zip: pdf
+	rm -f $@
+	zip -q -9 $@ *.pdf
+
+postscript-$(PAPER)-$(RELEASE).tar.bz2: ps
+	tar cf - *.ps | bzip2 -9 >$@
+
+postscript-$(PAPER)-$(RELEASE).tgz: ps
+	tar cf - *.ps | gzip -9 >$@
+
+postscript-$(PAPER)-$(RELEASE).zip: ps
+	rm -f $@
+	zip -q -9 $@ *.ps
+
+html-$(RELEASE).tgz:	html
+	tar cf - openvps | gzip -9 >$@
+
+html-$(RELEASE).tar.bz2:	html
+	tar cf - openvps | bzip2 -9 >$@
+
+html-$(RELEASE).zip:	html
+	rm -f $@
+	zip -q -9 $@ openvps
+
+# convenience targets:
+
+tarhtml:	html-$(RELEASE).tgz
+tarps:		postscript-$(PAPER)-$(RELEASE).tgz
+tarpdf:		pdf-$(PAPER)-$(RELEASE).tgz
+
+tarballs:	tarpdf tarps tarhtml
+
+ziphtml:	html-$(RELEASE).zip
+zipps:		postscript-$(PAPER)-$(RELEASE).zip
+zippdf:		pdf-$(PAPER)-$(RELEASE).zip
+
+zips:		zippdf zipps ziphtml
+
+bziphtml:	html-$(RELEASE).tar.bz2
+bzipps:		postscript-$(PAPER)-$(RELEASE).tar.bz2
+bzippdf:	pdf-$(PAPER)-$(RELEASE).tar.bz2
+
+bzips:		bzippdf bzipps bziphtml
+
+
+# Housekeeping targets
+
+# Remove temporary files; all except the following:
+# - sources: .tex, .bib, .sty, *.cls
+# - useful results: .dvi, .pdf, .ps, .texi, .info
+clean:
+	rm -f *~ *.aux *.idx *.ilg *.ind *.log *.toc *.bkm *.syn *.pla api.tex
+
+# Remove temporaries as well as final products
+clobber:	clean
+	rm -rf openvps
+	rm -f html-$(RELEASE).tgz
+	rm -f pdf-$(RELEASE).tgz postscript-$(RELEASE).tgz
+	rm -f html-$(RELEASE).zip
+	rm -f pdf-$(RELEASE).zip postscript-$(RELEASE).zip
+
+realclean:  clobber
+distclean:  clobber
+	rm -f Makefile
+
+# HTML in the doc directory
+dist: version html
+	rm -rf ../doc-html
+	mv openvps ../doc-html
+
+# Version substitution
+#version: ../src/include/mpversion.h
+#	DATE="`date +'%B %d, %Y'`"; \
+#	VERSION="`awk '/MPV_STRING/ {print $$3}' ../src/include/mpversion.h`"; \
+#	VERSION="`echo $$VERSION | sed s/\\"//g`"; \
+#	cat openvps.tex | sed s/\\release.*/\\release\{$$VERSION\}/ >openvps.tex2; \
+#	cat openvps.tex2 | sed s/\\date.*/\\date\{"$$DATE"\}/ >openvps.tex
+
+

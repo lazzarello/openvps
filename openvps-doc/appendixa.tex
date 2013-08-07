@@ -1,0 +1,200 @@
+\chapter{Details of the OpenVPS host scripts\label{app-openvps-host}}
+
+\begin{itemize}
+
+\item
+  Configuration of the physical server to make it suitable for hosting.
+
+  \begin{itemize}
+
+  \item
+    Interactively sreate an editable OpenVPS configuration file which
+    contains certain defaults for virtual servers (backups, SSL cert
+    defaults, location of vserver utils, etc.).
+    
+  \item
+    Up the amount of available Sys V IPC semaphores, as the defaults
+    provided in Linux are too low for virtual hosting.
+
+  \item
+    Disable IPv6 support. (This may be a temporary measure until the
+    Linux VServer IPv6 is figured out).
+
+  \item
+    Disable all of the services on the machine except for the absolute
+    minimal set required.
+
+  \item
+    Configure sshd and httpd to only listen on the main server IP rather
+    than 0.0.0.0 (default).
+
+  \item
+    Configure a caching name server which the virtual servers on this
+    physical server will be using. Make sure the nameserver only
+    listens on the main IP.
+
+  \item
+    Configure the util-vserver vprocunhide service to run at startup.
+
+  \item
+    Add a user called ``ohd''. This user executes certain helper
+    programs that must run outside of virtual servers because they
+    require elvated privileges (e.g. traceroute).
+
+  \item
+    Add a user called ``backup''. This user is used to accept backups
+    from other servers when they are configured in a peer
+    configuration.
+
+  \end{itemize}
+
+  \item
+    Building of a \dfn{Reference Server}. The reference server serves
+    as the starting template for all virtual servers. The reference
+    server consists of a large selection of Fedora packages chosen
+    based on applicability to a hosting environment. This list can be
+    augmented via the OpenVPS configuration file.
+
+    \begin{itemize}
+      
+    \item
+      Make the necessary limited set of device files.
+
+    \item
+      Resolve the initial list of packages - the latest
+      version/release will be chosen from the available list, which
+      can be a local directory or a URL of a Fedora mirror.
+
+    \item
+      Install the specified packages, including some if the
+      customized RPM's for the OpenVPS (e.g. webmin with all
+      physical-server-specific options removed).
+
+    \item
+      Turn off all services except those that are most appropriate
+      in a VPS.
+
+    \item
+      Make vserver-friendly fstab and mtab files.
+
+    \item
+      Fix up the /etc/init.d/halt script to behave error-free in the
+      vserver environment.
+
+    \item
+      Remove klogd references from the syslogs service.
+      
+    \item
+      Create a /usr/libexec/oh with some OpenVPS-specific binaries
+      (traceroute).
+
+    \item
+      Fix up the /etc/sysconfig/i18n file.
+	
+    \item
+      Remove mingetty's from /etc/inittab.
+      
+    \item
+      Fix up vncserver to use the light-weight xfce desktop.
+      
+    \item
+      Run the ``fixflag'' OpenVPS command to set appropriate
+      immutable/iunlink flags for non-configuration files and as
+      described in OpenVPS clone rules.
+      
+    \end{itemize}
+
+  \item
+    \dfn{Cloning} of the Reference Server. This is a process by which
+    the virtual server is created. The actual cloning means either
+    copying, hard-linking or touching a file depending on its VServer
+    flags and the OpenVPS clone rules. (The iunlink flag is part of
+    the VServer \dfn{unification} feature).
+
+  \item
+    \dfn{Customization} of the newly-cloned VPS. This is where the
+    final touches are applied.
+
+    \begin{itemize}
+      
+    \item
+      Create the VServer config for the VPS. This is where the IP,
+      the root directory, the scheduling limits and other things
+      are set up.
+      
+    \item
+	Add a user account. This account typically matches the name of
+	the VPS and is known as the \dfn{main account}. 
+
+    \item
+      Set the initial password for the main account and root. The
+      password can be supplied in plain text or as an MD5 hash.
+
+    \item
+      Make the /etc/resolv.conf file which uses 127.0.0.1 (the
+      physical server) as the primary DNS server and searches a
+      supplied domain.
+
+    \item
+      Write an /etc/motd file (configurable).
+
+    \item
+      Fix-up the /etc/rc.d/rc to return true to play nice with the
+      VServer utils.
+
+    \item
+      Configure sendmail to accept mail for a supplied domain. Also
+      up the RefuseLA setting to prevent sendmail from stopping
+      accepting mail at high server loads.
+
+    \item
+      Configure an IMAP and POP servers (currently dovecot) to only
+      accept SSL connections.
+
+    \item
+      Create a stub index.html page (configurable).
+
+    \item
+      Set a disk limit for the VPS using VServer dlimimt tool.
+      
+    \item
+      Create an RRD database and iptable rules for bandwidth
+      accounting.
+
+    \item
+      Generate SSL certificates for the VPS (CA configurable).
+
+    \item
+      Create an Apache proxy URL for access to the admin panel.
+
+    \item
+      Create a CVS root (required by webmin).
+
+    \item
+      Disable PAM limits (work-around what seems to be a PAM bug).
+
+    \item
+      Set the webmin password to the same one as the main user.
+	
+    \item
+      Generate an SSH key that will allow connecting to the ohd
+      account to execute elevated priv programs (traceroute).
+	
+    \item
+      Make lib/modules immutable as a deterrent to users accidently
+      installing a kernel (which would only waste space).
+	
+    \item
+      Configure vncserver to start a desktop for the main user (off
+      by default).
+
+    \item
+      Make the location of the vserver a symlink to a directory
+      whose name matches the context id. (security measure)
+
+    \item
+      Set permissions to /vservers to 0000. (Always, just in case).
+      
+    \end{itemize}
+
+\end{itemize}

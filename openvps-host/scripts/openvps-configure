@@ -1,0 +1,632 @@
+#!/usr/bin/env python
+
+#
+# Copyright 2004 OpenHosting, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# $Id: openvps-configure,v 1.16 2005/10/22 19:49:50 grisha Exp $
+
+#
+#This script initially sets up the system.
+#
+
+# first we need to read the config, but this is rather easy:
+
+from openvps.host import cfg
+from openvps.common import crypto
+import os
+import shutil
+import pwd
+import commands
+import sys
+import time
+import getpass
+
+# then we need to ask our questions:
+
+def get_vservers_root():
+
+    prompt = 'Please enter the location of vservers [%s]:' % cfg.VSERVERS_ROOT
+
+    s = raw_input(prompt)
+    if not s:
+        return cfg.VSERVERS_ROOT
+    while not os.path.isdir(s):
+        print '%s must be a valid directory' % s
+        s = raw_input(prompt)
+        if not s:
+            return cfg.VSERVERS_ROOT
+
+    cfg.VSERVERS_ROOT = s
+    return s
+
+def get_backup():
+
+    prompt = 'Please enter the directory for backups [%s]:' % cfg.BACKUP
+
+    s = raw_input(prompt)
+    if not s:
+        return cfg.BACKUP
+    
+    while not os.path.isdir(s):
+        print '%s must be a valid directory' % s
+        s = raw_input(prompt)
+        if not s:
+            return cfg.BACKUP
+
+    cfg.BACKUP = s
+    return s
+
+def get_peerip():
+
+    prompt = 'Please enter the IP of the peer server (for backups) [%s]:' % cfg.PEERIP
+    s = raw_input(prompt)
+    if not s:
+        return cfg.PEERIP
+
+    cfg.PEERIP = s
+    return s
+
+def get_mon_target_ip():
+
+    prompt = 'Please enter the IP of the server to receive mon heartbeats [%s]:' % cfg.MON_TARGET_IP
+    s = raw_input(prompt)
+    if not s:
+        return cfg.MON_TARGET_IP
+
+    cfg.MON_TARGET_IP = s
+    return s
+
+def get_mon_secret():
+
+    prompt = 'Please enter the shared secret to sign heartbeats with [%s]:' % cfg.MON_SECRET
+    s = raw_input(prompt)
+    if not s:
+        return cfg.MON_SECRET
+
+    cfg.MON_SECRET = s
+    return s
+
+def get_dump_secret():
+
+    prompt = 'Please enter a passphrase to encrypt vps dumps [%s]:' % cfg.DUMP_SECRET
+    s = raw_input(prompt)
+    if not s:
+        return cfg.DUMP_SECRET
+
+    cfg.DUMP_SECRET = s
+    return s
+
+def get_ssl_org_country():
+
+    prompt = 'Please enter your country (for SSL certs) [%s]:' % cfg.SSL_ORG_COUNTRY
+    s = raw_input(prompt)
+    if not s:
+        return cfg.SSL_ORG_COUNTRY
+
+    cfg.SSL_ORG_COUNTRY = s
+    return s
+
+def get_ssl_org_state():
+
+    prompt = 'Please enter your state (for SSL certs) [%s]:' % cfg.SSL_ORG_STATE
+    s = raw_input(prompt)
+    if not s:
+        return cfg.SSL_ORG_STATE
+
+    cfg.SSL_ORG_STATE = s
+    return s
+
+def get_ssl_org_name():
+
+    prompt = 'Please enter your org name (for SSL certs) [%s]:' % cfg.SSL_ORG_NAME
+    s = raw_input(prompt)
+    if not s:
+        return cfg.SSL_ORG_NAME
+
+    cfg.SSL_ORG_NAME = s
+    return s
+
+def get_util_vserver_prefix():
+    """ Where are util-vserver? """
+
+    cmd = 'which vserver'
+    s = commands.getoutput(cmd)
+    if s.find('no vserver') == -1:
+        prefix, x = os.path.split(s) # e.g. /usr/sbin, vserver
+        prefix, x = os.path.split(prefix) # e.g. /usr
+        dft = prefix
+    else:
+        dft = cfg.VSERVER_PREFIX
+
+    prompt = 'Please enter the prefix for util-vserver [%s]:' % dft
+    s = raw_input(prompt)
+    if not s:
+        s = dft
+
+    cfg.VSERVER_PREFIX = s
+    return s
+
+def get_primary_ip():
+
+    print 'Trying to figure out the primary ip (assuming eth0)...',
+    ip = commands.getoutput("ifconfig eth0 | grep inet | head -n 1 | awk '{print $2}' | awk -F: '{print $2}'")
+    print '    ', ip
+
+    cfg.PRIMARY_IP = ip
+    return ip
+
+def get_backend_ip():
+
+    print 'Trying to figure out the back-end ip (assuming eth1)...',
+    ip = commands.getoutput("ifconfig eth1 | grep inet | head -n 1 | awk '{print $2}' | awk -F: '{print $2}'")
+    if 'error' in ip:
+        ip = None
+    print '    ', ip
+
+    cfg.BACKEND_IP = ip
+    return ip
+
+def get_domain_name():
+
+    if cfg.DEFAULT_DOMAIN == 'domain.tld':
+        domain = '.'.join(commands.getoutput('hostname -f').split('.')[1:])
+    else:
+        domain = cfg.DEFAULT_DOMAIN
+
+    prompt = 'Please enter the default domain name for vservers [%s]:' % domain
+    s = raw_input(prompt)
+    if not s:
+        s = domain
+
+    cfg.DEFAULT_DOMAIN = s
+    return s
+
+def get_panel_superuser():
+
+    prompt = 'Please enter a superuser name for OpenVPS control panel [%s]:' % cfg.PANEL_SUPERUSER
+    s = raw_input(prompt)
+    if not s:
+        return cfg.PANEL_SUPERUSER
+
+    cfg.PANEL_SUPERUSER = s
+    return s
+
+def get_panel_superuser_pw():
+
+    prompt = 'Please enter a password for the OpenVPS control panel superuser [********]:'
+    s = getpass.getpass(prompt)
+    if not s:
+        return cfg.PANEL_SUPERUSER_PW
+
+    cfg.PANEL_SUPERUSER_PW = crypto.passwd_hash_md5(s)
+    return cfg.PANEL_SUPERUSER_PW
+
+def save_config(params):
+
+    # first we need to read it
+    lines = open(cfg.CONFIG_FILE).readlines()
+
+    for param in params.keys():
+        saved = 0
+        for n in range(len(lines)):
+            
+            # split() is here to make sure that it's not just a beginning
+            # of a param that matches, but the whole word
+            if lines[n].startswith(param) and lines[n].split()[0] == param:
+                lines[n] = '%s = %s\n' % (param, `params[param]`)
+                saved = 1
+                
+        if not saved:
+            lines.append('%s = %s\n' % (param, `params[param]`))
+
+    backup = cfg.CONFIG_FILE+'.orig'
+    print 'Saving config to %s, original one renamed to %s' % \
+          (cfg.CONFIG_FILE, backup)
+    shutil.copy(cfg.CONFIG_FILE, backup)
+    open(cfg.CONFIG_FILE, 'w').writelines(lines)
+
+    # just in case
+    os.chmod(cfg.CONFIG_FILE, 0600)
+    
+def run_cmd(cmd):
+
+    print cmd
+
+    pipe = os.popen('{ ' + cmd + '; } ', 'r', 0)
+    s = pipe.read(1)
+    while s:
+        sys.stdout.write(s); sys.stdout.flush()
+        s = pipe.read(1)
+    pipe.close()
+
+def add_backup_user():
+
+    try:
+        pwd.getpwnam(cfg.BACKUP_USER)
+        print 'User %s already exists, not creating.' % cfg.BACKUP_USER
+        return
+
+    except KeyError:
+        print 'Adding user %s' % cfg.BACKUP_USER
+
+        cmd = "/usr/sbin/adduser -c 'OpenVPS Backup User' -d %s %s" % \
+              (cfg.BACKUP, cfg.BACKUP_USER)
+        run_cmd(cmd)
+
+        sshdir = os.path.join(cfg.BACKUP, '.ssh')
+        if not os.path.exists(sshdir):
+            os.mkdir(sshdir, 0700)
+        if not os.path.exists(sshdir+'/authorized_keys'):
+            os.mknod(sshdir+'/authorized_keys')
+        commands.getoutput('chown -R %s %s' % (cfg.BACKUP_USER, cfg.BACKUP))
+        os.chmod(sshdir+'/authorized_keys', 0600)
+
+            
+def plant_peer_key():
+
+    if not os.path.exists(cfg.OHB_DSA_KEY):
+        print 'Generating DSA key for backups...'
+        cmd = 'ssh-keygen -t dsa -N "" -f %s' % cfg.OHB_DSA_KEY
+        run_cmd(cmd)
+
+        if cfg.PEERIP != '127.0.0.1':
+            print
+            print "Now we are going to try to copy %s.pub to the peer server, you will be prompted for a password" % cfg.OHB_DSA_KEY
+            print "If this fails (e.g. peer server is not yet set up), then"
+            print "REMEMBER to paste the contents of %s.pub into %s/.ssh/authorized_keys on %s" \
+                  % (cfg.OHB_DSA_KEY, cfg.BACKUP, cfg.PEERIP)
+            print "also remember to ssh to %s at least once to get it into known_hosts." % cfg.PEERIP
+            print
+            s = raw_input("Should we try this now? [y]")
+            if not s or s == 'y':
+                cmd = 'cat %s.pub | ssh -v %s "cat >> %s/.ssh/authorized_keys"' \
+                      % (cfg.OHB_DSA_KEY, cfg.PEERIP, cfg.BACKUP)
+                run_cmd(cmd)
+        else:
+            # we are the peer
+            pass
+
+def fix_sems():
+
+    s = commands.getoutput('grep kernel.sem /etc/sysctl.conf')
+    if not s:
+        print 'Increasing the number of available semaphores.'
+        # kernel.sem is semmsl semmns semopm semmni
+        # semmsl - Maximum number of sems per unique id
+        # semmns - Max number of semaphores in the system.
+        # semopm - Max number of semaphore operations that
+        #          can be performed per semop(2) call.
+        # semmni - Max number of semaphore sets, system wide.
+        commands.getoutput('sysctl -w kernel.sem="250 524000 32 4096"')
+        commands.getoutput('echo "kernel.sem = 250 524000 32 4096" >> /etc/sysctl.conf')
+
+def fix_shm():
+
+    # At this point it seems that the Linux defaults are fine. Here is a pretty good
+    # page on IPC:
+    # http://www.puschitz.com/TuningLinuxForOracle.shtml
+
+    pass
+
+##     s = commands.getoutput('grep kernel.shmall /etc/sysctl.conf')
+##     if not s:
+##         print 'Increasing the amount of available shared memory.'
+##         # kernel.shmall is total amount of shared memory available _in pages_ (4K)
+##         # kernel.shmmax is the maximum size of a segment
+##         commands.getoutput('sysctl -w kernel.shmall=134217728')
+##         commands.getoutput('echo "kernel.shmall = 134217728" >> /etc/sysctl.conf')
+
+def fix_arp_ignore():
+
+    # this is critical for direct-server-return load-balancing where you need
+    # an interface that does not respond to arps
+
+    s = commands.getoutput('grep net.ipv4.conf.default.arp_ignore /etc/sysctl.conf')
+    if not s:
+        print 'Setting net.ipv4.conf.default.arp_ignore to 1.'
+        commands.getoutput('sysctl -w net.ipv4.conf.default.arp_ignore=1')
+        commands.getoutput('echo 1 > /proc/sys/net/ipv4/conf/eth0/arp_ignore')
+        commands.getoutput('echo "net.ipv4.conf.default.arp_ignore = 1" >> /etc/sysctl.conf')
+
+def create_dummy0():
+
+    # make sure that the dummy interface exists prior to starting vservers. this is only
+    # important in dsr lb setups
+
+    path = '/etc/sysconfig/network-scripts/ifcfg-dummy0'
+
+    if not os.path.exists(path):
+        print 'Writing %s so a dummy0 exists' % path
+        open(path, 'w').write('DEVICE=dummy0\nONBOOT=yes\nIPV6INIT=no\n')
+
+def disable_ipv6():
+    # XXX Is this really necessary?
+
+    mp = '/etc/modprobe.conf'
+    alias = 'alias net-pf-10 off'
+
+    found = 0
+    lines = open(mp).readlines()
+    for line in lines:
+        if line.startswith('alias net-pf-10 off'):
+            return
+
+    # if we got this far it's not there
+    print 'Adding %s to %s to disable IPv6...' % (alias, mp)
+    open(mp, 'a').write('\n%s\n'% alias)
+
+    print 'Done.\nNOTE: This will onle take effect after a REBOOT!\n'
+    time.sleep(2)
+
+def vserver_config():
+
+    # we insist that the vserver config be available via
+    # /etc/vservers. So if the vserver prefix is /usr/local and /etc/vservers
+    # does not exist, we make it a symlink.
+
+    if not os.path.exists('/etc/vservers'):
+        if cfg.VSERVER_PREFIX != '/usr':
+            dest = os.path.join(cfg.VSERVER_PREFIX, 'etc/vservers')
+            print 'Symlinking /etc/vservers -> %s' % dest
+            os.symlink(dest, '/etc/vservers')
+        else:
+            os.mkdir('/etc/vservers')
+    elif (not os.path.islink('/etc/vservers')) and (cfg.VSERVER_PREFIX != '/usr'):
+        print '\n       !!! *** !!!\n'
+        print 'WARNING: Your vserver prefix is %s, yet there exists /etc/vservers ' \
+              'which is not a symlink - perhaps you have two versions of util-vserver? ' \
+              'Please fix this! /etc/vservers should be a symlink to the real config dir.' % `cfg.VSERVER_PREFIX`
+        print '\n       !!! *** !!!\n'
+
+def fix_services():
+
+    print 'Disabling most services:'
+    print '    ',
+
+    srvs = os.listdir('/etc/init.d')
+    for srv in srvs:
+        if srv not in ['functions', 'killall', 'halt', 'single'] and \
+               (not srv.endswith('~') or srv.endswith('.bak') or srv.startswith('#')):
+            print srv,
+            commands.getoutput('/sbin/chkconfig --level 012345 %s off' % srv)
+            
+    print '\nEnabling services we need:'
+    print '    ',
+
+    for srv in ['network', 'sshd', 'syslog', 'atd', 'random', 'iptables',
+                'crond', 'anacron', 'httpd', 'named', 'vservers-default',
+                'ovresources', 'ohd', 'ovtc', 'ohfixproc', 'openvps-mon',
+                'netfs', 'sendmail']:
+        print srv,
+        commands.getoutput('/sbin/chkconfig %s on' % srv)
+
+    print
+
+def fix_sshd():
+
+    if cfg.BACKEND_IP:
+        print 'Forcing sshd to listen to the primary IP on eth0 (%s), '\
+              'backend on eth1 (%s) and loopback only' % (cfg.PRIMARY_IP, cfg.BACKEND_IP)
+    else:
+        print 'Forcing sshd to listen to the primary IP on eth0 (%s) and loopback only' % cfg.PRIMARY_IP
+        
+    ip, bip = cfg.PRIMARY_IP, cfg.BACKEND_IP
+
+    shutil.copy('/etc/ssh/sshd_config', '/etc/ssh/sshd_config.orig')
+    lines = open('/etc/ssh/sshd_config').readlines()
+    set = 0
+    for n in range(len(lines)):
+        stripped = lines[n].strip().lower()
+        if stripped.find('listenaddress') > -1:
+            if not set:
+                if cfg.BACKEND_IP:
+                    lines[n] = 'ListenAddress %s\nListenAddress %s\n' \
+                               'ListenAddress 127.0.0.1\n' % (ip, bip)
+                else:
+                    lines[n] = 'ListenAddress %s\nListenAddress 127.0.0.1\n' % ip
+                set = 1
+            elif stripped[0] != '#':
+                lines[n] = '#'+lines[n]
+
+    open('/etc/ssh/sshd_config', 'w').writelines(lines)
+
+    s = raw_input('Can I restart sshd now? [n]')
+    if s == 'y':
+        run_cmd('service sshd restart')
+    else:
+        print '\nREMEMBER to restart sshd (with "service sshd restart")!!!\n'
+        time.sleep(2)
+
+def fix_named():
+
+    print 'Trying to force named to listen on the primary IP on eth0 (%s) only' % cfg.PRIMARY_IP
+    ip = cfg.PRIMARY_IP
+
+    # are we using chroot?
+    if os.path.exists('/var/named/chroot'):
+        conf = '/var/named/chroot/etc/named.conf'
+    else:
+        conf = '/etc/named.conf'
+
+    shutil.copy(conf, conf+'.orig')
+    lines = open(conf).readlines()
+
+    set = 0
+    for n in range(len(lines)):
+        if lines[n].strip().startswith('options'):
+            # insert our listen-on
+            lines[n] = lines[n]+'\n    listen-on {%s; 127.0.0.1;};\n' % ip
+            set = 1
+        if lines[n].strip().startswith('listen-on'):
+            # comment out all other liste-ons
+            lines[n] = '// '+lines[n]
+
+    if not set:
+        # if options section never encountered, append it
+        lines = lines + ['options {\n',
+                         '    listen-on {%s; 127.0.0.1;};\n' % ip,
+                         '};\n']
+
+    open(conf, 'w').writelines(lines)
+
+def fix_httpd():
+
+    print 'Configuring httpd to listen only on SSL'
+
+    # httpd.conf
+    shutil.copy('/etc/httpd/conf/httpd.conf', '/etc/httpd/conf/httpd.conf.orig')
+    lines = open('/etc/httpd/conf/httpd.conf').readlines()
+
+    for n in range(len(lines)):
+        if lines[n].strip().lower().startswith('listen'):
+            lines[n] = '#'+lines[n]
+
+    open('/etc/httpd/conf/httpd.conf', 'w').writelines(lines)
+
+    # ssl.conf
+    shutil.copy('/etc/httpd/conf.d/ssl.conf', '/etc/httpd/conf.d/ssl.conf.orig')
+    lines = open('/etc/httpd/conf.d/ssl.conf').readlines()
+
+    for n in range(len(lines)):
+        if lines[n].strip().lower().startswith('listen'):
+            lines[n] = '#'+lines[n]
+
+    open('/etc/httpd/conf.d/ssl.conf', 'w').writelines(lines)
+
+    # openvps.conf
+    shutil.copy('/etc/httpd/conf.d/openvps.conf', '/etc/httpd/conf.d/openvps.conf.orig')
+    lines = open('/etc/httpd/conf.d/openvps.conf').readlines()
+
+    set = 0
+    for n in range(len(lines)):
+        if lines[n].strip().lower().startswith('listen'):
+            if not set:
+                lines[n] = 'Listen %s:443\n' % cfg.PRIMARY_IP
+                set = 1
+            else:
+                lines[n] = '#'+lines[n]
+
+        if lines[n].lower().startswith('<virtualhost'):
+            lines[n] = '<VirtualHost %s:443>\n' % cfg.PRIMARY_IP
+        
+    open('/etc/httpd/conf.d/openvps.conf', 'w').writelines(lines)
+
+def vproc_unhide():
+
+    if not os.path.exists('/etc/init.d/vprocunhide') and \
+       os.path.exists('/usr/local/etc/init.d/vprocunhide'):
+        print 'Adding the vprocunhide service'
+        cmd = 'ln -s /usr/local/etc/init.d/vprocunhide /etc/init.d/vprocunhide'
+        run_cmd(cmd)
+    cmd = 'chkconfig vprocunhide on'
+    run_cmd(cmd)
+    run_cmd('/etc/init.d/vprocunhide start')
+
+def add_ohd_user():
+
+    try:
+        pwd.getpwnam(cfg.OHD_USER)
+        print 'User %s already exists, not creating.' % cfg.OHD_USER
+        return
+
+    except KeyError:
+        print 'Adding user %s' % cfg.OHD_USER
+
+        cmd = "/usr/sbin/adduser -c 'OpenVPS Priv Exec User' %s" % cfg.OHD_USER
+        run_cmd(cmd)
+
+        sshdir = os.path.join('/home', cfg.OHD_USER, '.ssh')
+        if not os.path.exists(sshdir):
+            os.mkdir(sshdir, 0700)
+        commands.getoutput('chown %s %s' % (cfg.OHD_USER, sshdir))
+        if not os.path.exists(sshdir+'/authorized_keys'):
+            os.mknod(sshdir+'/authorized_keys')
+        commands.getoutput('chown %s %s' % (cfg.OHD_USER, sshdir+'/authorized_keys'))
+        os.chmod(sshdir+'/authorized_keys', 0600)
+
+        # add to sudoers
+        s = commands.getoutput('grep %s /etc/sudoers' % cfg.MISC_DIR)
+        if s:
+            print 'Not adding %s to sudoers because it appears to be there already' % cfg.OHD_USER
+        else:
+            print 'Adding %s to sudoers' % cfg.OHD_USER
+            ohdexec = os.path.join(cfg.MISC_DIR, 'ohdexec')
+            open('/etc/sudoers', 'a').write("\nohd     ALL= NOPASSWD: %s\n" % ohdexec)
+
+def main():
+
+    params = {}
+
+    params['VSERVERS_ROOT'] = get_vservers_root()
+    params['VSERVER_PREFIX'] = get_util_vserver_prefix()
+    params['BACKUP'] = get_backup()
+    params['PEERIP'] = get_peerip()
+    params['MON_TARGET_IP'] = get_mon_target_ip()
+    params['MON_SECRET'] = get_mon_secret()
+    params['DUMP_SECRET'] = get_dump_secret()
+    params['SSL_ORG_COUNTRY'] = get_ssl_org_country()
+    params['SSL_ORG_STATE'] = get_ssl_org_state()
+    params['SSL_ORG_NAME'] = get_ssl_org_name()
+    params['DEFAULT_DOMAIN'] = get_domain_name()
+    params['PRIMARY_IP'] = get_primary_ip()
+    params['BACKEND_IP'] = get_backend_ip()
+    params['PANEL_SUPERUSER'] = get_panel_superuser()
+    params['PANEL_SUPERUSER_PW'] = get_panel_superuser_pw()
+
+    save_config(params)
+    vserver_config()
+    fix_sems()
+    fix_shm()
+    fix_arp_ignore()
+    create_dummy0()
+    disable_ipv6()
+    fix_services()
+    fix_sshd()
+    fix_named()
+    fix_httpd()
+    vproc_unhide()
+    add_ohd_user()
+    add_backup_user()
+    plant_peer_key()
+
+    print
+    print
+    print " We  are  *almost*  done  now.  The  last remaining  step  is to"
+    print " build  a  reference  server.   To  do  this  we  first  need  a"
+    print " directory that  contains  all the rpms  from  the  distribution"
+    print " CDs (i.e. everything in the RPMS directory on all 3 Fedora CD's),"
+    print " or  a  URL  to  an  ftp/http  server with a distribution on it."
+    print 
+    print " Even  if  you decide to use the local filesystem,  you will still"
+    print " need to make sure the server can get out to the Internet via HTTP"
+    print " at this point,  because  the next step will attempt to download a"
+    print " few RPMs from openvps.org (look in dft.py for specifics)."
+    print
+    print " Once you have that setup, do (as root)"
+    print
+    print " # openvps buildref /vservers/REF /location/of/rpms"
+    print "     OR"
+    print " # openvps buildref /vservers/REF http://favorite.mirror.tld/fedora/core/X/i386/os"
+    print
+
+main()
+
+###
+# do not edit this if you like using emacs
+# makes emacs go into python mode
+### Local Variables:
+### mode:python
+### End:

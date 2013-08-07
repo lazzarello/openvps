@@ -1,0 +1,211 @@
+#!/usr/bin/env python
+
+import os
+import commands
+from syslog import syslog, openlog
+import sys
+
+from openvps.host import vsutil
+from openvps.host import cfg
+
+def get_client_ip():
+    """ get the ip from the environment """
+
+    ip = None
+
+    try:
+        ssh_conn = os.environ['SSH_CONNECTION']
+        # Note that we actually grab the _destination_ ip here.
+        # because the client should be connecting to 127.0.0.1,
+        # and vserver redirects that to the IP of the vserver, the
+        # destination becomes the vserver's ip, (and the source
+        # would be 127.0.0.1 as in normal loopback connections)
+        # XXX This may brake in later vserver versions
+        ip = ssh_conn.split()[2]
+    except:
+        pass
+
+    return ip
+
+openlog('ohdexec')
+
+def log(data):
+    """ log to syslog """
+    
+    ip = get_client_ip()
+    syslog('%s: %s' % (ip, data))
+                    
+
+def get_command():
+    """ get the command that the user intended """
+
+    command = None
+
+    try:
+        command = os.environ['SSH_ORIGINAL_COMMAND']
+    except:
+        pass
+
+    cmd = command.split(None, 1)
+    if len(cmd) == 1:
+        cmd.append('')
+
+    # cmd is (prog, args) tuple
+    return cmd
+
+def list_objects(root, path):
+    """ List the binary and the libraries it depends on """
+
+    # check /usr/bin/ldd first
+
+    ldd_path = os.path.join(root, 'usr/bin/ldd')
+    if not vsutil.is_file_immutable_unlink(ldd_path):
+        log('Warning: %s does not have iunlink flag set!' % ldd_path)
+        return None
+
+    # this has to be done chroot vserver to be real
+
+    cmd = '/usr/sbin/chroot %s ' \
+          '/usr/bin/ldd -v %s' % (root, path)
+
+    lines = commands.getoutput(cmd).splitlines()
+    libs, seen_vi = [], 0
+    for line in lines:
+
+        if seen_vi:
+
+            # only look at absolute paths
+            line = line.strip()
+            if line.startswith('/'):
+                libs.append(line[:-1]) # strip ':' at the end
+
+        else:
+
+            # skip past 'version information'
+            if 'ersion information' in line:
+                seen_vi = 1
+
+    return libs
+
+def follow_link(path, root):
+
+    # if this is a symlink, follow it
+    n = 0
+    while os.path.islink(path):
+        link = os.readlink(path)
+        n += 1
+        if n > 10:
+            log('Too many links: %s, terminating.' % `path`)
+            return
+        if os.path.isabs(link):
+            path = os.path.join(root, link[1:])
+        else:
+            path = os.path.join(os.path.split(path)[0], link)
+
+    return path
+            
+def is_binary_safe(root, cmd):
+    """ Is a binary safe to run? path is absolute within
+        a vserver """
+
+    safe = 0
+
+    # what does this binary consist of?
+    objs = list_objects(root, cmd)
+
+    if objs:
+
+        safe = 1
+        for obj in objs:
+            long_path = os.path.join(root, obj[1:])
+
+            long_path = follow_link(long_path, root)
+
+            if not long_path:
+                safe = 0
+                break
+            
+            if not vsutil.is_file_immutable_unlink(long_path):
+                safe = 0
+                log('Warning: while checking %s, %s does not have iunlink flag set!' % (obj, long_path))
+                break
+
+    return safe
+    
+
+def run_command(vserver, path, args, caps):
+
+    """ Run the command. Path should be absolute within a
+        vserver. Args should be a string.
+    """
+
+    # the cd first, then chroot trick is there to get
+    # aroud the 0000 permissions on the vserver root (once
+    # you switched context, vserver won't allow traversing
+    # 0000 directories, even if root
+
+    os.chdir(vserver['vdir'])
+
+    # our caps
+    cap_opts = '--bcap ' + ' --bcap '.join(caps)
+
+    chbind = os.path.join(cfg.VSERVER_PREFIX, 'sbin/chbind')
+    vcontext = os.path.join(cfg.VSERVER_PREFIX, 'sbin/vcontext')
+    vattr = os.path.join(cfg.VSERVER_PREFIX, 'sbin/vattribute')
+
+    cmd = '%s --silent --ip %s -- %s --silent --create -- %s --set --secure ' \
+          '%s -- %s --migrate-self --chroot %s %s' % \
+          (chbind, vserver['interfaces'][0]['ip'],
+           vcontext, vattr, cap_opts, vcontext,
+           path, args)
+           
+##     cmd = '%s --silent --ip %s %s ' \
+##           '--silent --ctx %s --secure %s /usr/sbin/chroot . %s %s' \
+##           % (os.path.join(cfg.VSERVER_PREFIX, 'sbin/chbind'),
+##              vserver['interfaces'][0]['ip'],
+##              os.path.join(cfg.VSERVER_PREFIX, 'sbin/chcontext'),
+##              vserver['context'], cap_opts,
+##              path, args)
+
+    return os.execv(os.path.join(cfg.VSERVER_PREFIX, 'sbin/chbind'), cmd.split())
+
+def main():
+
+    if len(sys.argv) != 2:
+        log('Only one argument allowed, terminating. sys.argv is %s' % `sys.argv`)
+        return
+
+    # find the matching vserver
+    try:
+        vserver = vsutil.list_vservers()[sys.argv[1]]
+    except KeyError:
+        log('Unknown vserver: %s, terminating.' % `sys.argv[1]`)
+        return
+
+    # determine which command they want to run
+    cmd, args = get_command()
+
+    # what is the binary and what caps are needed for this command?
+    if cmd not in cfg.COMMAND_CAPS:
+        log('Command %s %s not allowed to run with raised caps.' % (cmd, args))
+        return
+
+    binary, caps = cfg.COMMAND_CAPS[cmd]
+
+    if not is_binary_safe(vserver['vdir'], binary):
+        log('Binary %s or one of its libraries does not have the iunlink flag ' \
+            'set to be allowed to run with elevated capabilities, terminating.' \
+            % `binary`)
+        return
+
+    sys.exit(run_command(vserver, binary, args, caps))
+
+
+main()
+
+###
+# do not edit this if you like using emacs
+# makes emacs go into python mode
+### Local Variables:
+### mode:python
+### End:

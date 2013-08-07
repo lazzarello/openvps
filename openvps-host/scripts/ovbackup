@@ -1,0 +1,159 @@
+#!/usr/bin/env python
+
+#
+# Copyright 2004 OpenHosting, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# $Id: ovbackup,v 1.12 2007/04/13 18:20:58 grisha Exp $
+
+"""Script to dump the vserver and some other important files
+to a backup drive"""
+
+from openvps.host import cfg
+
+import time
+import os
+import sys
+import commands
+from syslog import syslog, openlog
+
+openlog('ovbackup')
+
+DUMP = '/sbin/dump'
+SSH = '/usr/bin/ssh -c blowfish -i %s' % cfg.OHB_DSA_KEY
+TAR = '/bin/tar'
+LEVEL0_FILE = os.path.join(cfg.BACKUP, 'level0')
+
+HOST = commands.getoutput('hostname -s')
+
+def sleep():
+    # sleep until it is our time.
+
+    slices = cfg.BACKUP_WINDOW / cfg.BACKUP_SLICE
+    shuffle = int(cfg.PRIMARY_IP.split('.')[-1][-1])
+    slice = shuffle % slices
+
+    sleep_dur = slice * cfg.BACKUP_SLICE * 60
+
+    syslog('Backups started, sleeping until %s to start' % time.ctime(time.time()+sleep_dur))
+    time.sleep(sleep_dur)
+    syslog('Sleep ended, now really starting backups')
+
+def which_level():
+
+    """Figure out dump level for today"""
+
+    if os.path.exists(LEVEL0_FILE):
+        os.unlink(LEVEL0_FILE)
+        return 0
+
+    # shuffle is to make sure all level0's don't happen on the same
+    # day. we base it on the PRIMARY_IP because it's always there (as
+    # opposed to BACKEND_IP which may not always be there). Based on
+    # the number of levels, only one 1 of 10 servers (2 out of 20,
+    # etc) would be performing a level0. 
+
+    shuffle = int(cfg.PRIMARY_IP.split('.')[-1][-1])
+    day = time.localtime()[2] + shuffle
+
+    # classical tower sequence
+    #levels = [9,0,3,2,5,4,7,6,9,8]
+
+    # these backups are now ordered sequentially, which means that the
+    # files will be smaller, but a restore may take twice as many dump
+    # files to go through. This is a compromise to save space on the
+    # backup server. 
+    
+    levels = [9,0,1,2,3,4,5,6,7,8]
+    
+    return levels[day % len(levels)]
+
+def get_target(fname):
+
+    if cfg.PEERIP != '127.0.0.1':
+        return '| %s %s@%s "cat > %s"' % (SSH, cfg.BACKUP_USER, cfg.PEERIP, fname)
+    else:
+        return '| %s > %s' % (os.path.join(cfg.PREFIX, 'sbin/pace'), fname)
+
+def run_cmd(cmd):
+
+    print cmd
+
+    pipe = os.popen('{ ' + cmd + '; } ', 'r', 0)
+    s = pipe.read(1)
+    while s:
+        sys.stdout.write(s); sys.stdout.flush()
+        s = pipe.read(1)
+    pipe.close()
+
+def do_dump():
+
+    level = which_level()
+    fname = os.path.join(cfg.BACKUP, HOST+'_vservers-level%d.dump' % level)
+
+    cmd = '%s %dujf - %s %s' % \
+          (DUMP, level, cfg.VSERVERS_ROOT, get_target(fname))
+    run_cmd(cmd)
+
+    # just in case
+    if os.path.exists(cfg.BACKUP):
+        # if we're backing up to a remote server, this path may not exist...
+        os.chmod(cfg.BACKUP, 0700)
+
+    
+def other_stuff():
+
+    now = time.localtime()
+
+    # 10 days daily
+    n = now[2] % 10
+
+    fname = os.path.join(cfg.BACKUP, HOST+'_var_db_openvps-daily%d.tar.bz2' % n)
+    cmd = 'cd /; %s cjvf - %s %s' % \
+          (TAR, cfg.VAR_DB_OPENVPS, get_target(fname))
+    run_cmd(cmd)
+
+    fname = os.path.join(cfg.BACKUP, HOST+'_etc_vservers-daily%d.tar.bz2' % n)
+    cmd = 'cd /; %s cjvf - %s %s' % \
+          (TAR, cfg.ETC_VSERVERS, get_target(fname))
+    run_cmd(cmd)
+
+    # 1st of every month
+    if now[2] == 1:
+        
+        fname = os.path.join(cfg.BACKUP, HOST+'_var_db_openvps-monthly.tar.bz2')
+        cmd = 'cd /; %s cjvf - %s %s' % \
+              (TAR, cfg.VAR_DB_OPENVPS, get_target(fname))
+        run_cmd(cmd)
+
+        
+        fname = os.path.join(cfg.BACKUP, HOST+'_etc_vservers-monthly.tar.bz2')
+        cmd = 'cd /; %s cjvf - %s %s' % \
+              (TAR, cfg.ETC_VSERVERS, get_target(fname))
+        run_cmd(cmd)
+
+
+sleep()
+#do_dump() # no dumps for now
+syslog('Dump done, now backing up configs and rrds')
+other_stuff()
+syslog('All backups completed')
+
+###
+# do not edit this if you like using emacs
+# makes emacs go into python mode
+### Local Variables:
+### mode:python
+### End:

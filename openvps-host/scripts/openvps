@@ -1,0 +1,464 @@
+#!/usr/bin/env python
+
+#
+# Copyright 2004 OpenHosting, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# $Id: openvps,v 1.17 2008/09/20 17:09:13 grisha Exp $
+
+
+"""
+This is the script to manipulate virtual servers.
+
+"""
+
+import sys, os, commands, re, struct, socket
+from openvps.host import vds
+from openvps.host import cfg
+
+# To add a command, simply define a cmd_* function here
+
+def cmd_clone():
+
+    parser = OptionParser(usage="%prog clone <source> <destination>\n"
+                          "  Clone a reference server at source to destination "
+                          "hard-linking when necessary")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify <source> and <destination>")
+
+    source, dest = args
+
+    vds.clone(source, dest)
+
+def cmd_unify():
+
+    parser = OptionParser(usage="%prog unify <source> <destination>\n"
+                          "  Unify a reference server at source with destination ")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify <source> and <destination>")
+
+    source, dest = args
+
+    vds.unify(source, dest)
+
+def cmd_version():
+    from openvps.host import VERSION
+    print 'OpenHosting Host Tools version %s' % VERSION
+    from openvps.common import VERSION
+    print 'OpenHosting Common Lib version %s' % VERSION
+    
+def cmd_buildref():
+
+    parser = OptionParser(usage="%prog buildref <refroot> <distroot>\n"
+                          "  Build a reference server")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify <refroot> and <distroot>")
+
+    refroot, distroot = args
+
+    # XXX some checking needs to go here?
+
+    vds.buildref(refroot, distroot)
+
+def cmd_customize():
+
+    parser = OptionParser(usage="%prog customize <name> <xid> <ip> <userid> <passwd> <disklim> [<vpn_ip[/mask]>]\n"
+                          "  Customize name <name> with <xid> <ip> <userid> <passwd> <disklim> [<vpn_ip[/mask]>]")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) not in (6, 7):
+        parser.error("Must specify 6 or 7 arguments")
+
+    name, xid, ip, userid, passwd, disklim = args[:6]
+
+    vpn_ip = None
+    if len(args) == 7:
+        vpn_ip = args[6]
+
+    # XXX some checking needs to go here?
+
+    if vpn_ip and '/' in vpn_ip:
+        vpn_ip, m = vpn_ip.split('/')
+        vpn_mask = (0xffffffffL << (32-int(m))) & 0xffffffffL
+        vpn_mask = socket.inet_ntoa(struct.pack('!L', vpn_mask))
+    else:
+        vpn_mask = '255.255.255.0'
+
+    if vpn_ip:
+        vds.customize(name, xid, ip, userid, passwd, disklim, cfg.PRIMARY_IP,
+                      vpn_ip, vpn_mask)
+    else:
+        vds.customize(name, xid, ip, userid, passwd, disklim)
+
+def cmd_custcopy():
+
+    parser = OptionParser(usage="%prog custcopy <name> <sourcepath>\n"
+                          "  Copy customization from <sourcepath> to vps named <name>")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify all 2 arguments")
+
+    name, srcpath = args
+
+    # XXX some checking needs to go here?
+
+    vds.custcopy(name, srcpath)
+
+def cmd_rebuild():
+
+    parser = OptionParser(usage="%prog rebuild <refroot> <name>\n"
+                          "  Rebuild vps named <name> using <refroot> as the reference server")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify all 2 arguments")
+
+    refroot, name = args
+
+    vds.rebuild(refroot, name)
+
+def cmd_fixflags():
+
+    parser = OptionParser(usage="%prog fixflags <refroot>\n"
+                          "  Set the right immutable flags on a reference server")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 1:
+        parser.error("Must specify <refroot>")
+
+    refroot = args[0]
+
+    vds.fixflags(refroot)
+
+def cmd_fixxids():
+
+    parser = OptionParser(usage="%prog fixxids <root> <xid>\n"
+                          "  Set the right xid tags on a vserver")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify both <root> and <xid>")
+
+    root, xid = args[0], int(args[1])
+
+    vds.fixxids(root, xid)
+
+def cmd_addip():
+
+    parser = OptionParser(usage="%prog addip <vserver> <ip>\n"
+                          "  Add ip <ip> to vserver <vserver>\n"
+                          "    where <ip> is [device:]ip[/mask]")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify <vserver> and <ip>")
+
+    vserver, ip = args[0], args[1]
+
+    # parse the ip
+    dev, mask = cfg.DFT_DEVICE, '255.255.255.255'
+
+    try:
+        d, i, m = re.match('^(?:(.*):)?([0-9.]*)(?:/?([1-3]?[0-9]))?$', ip).groups()
+    except:
+        parser.error("Invalid ip specification: '%s'" % ip)
+
+    if not i:
+        parser.error("Invalid ip specification: '%s'" % ip)
+    else:
+        ip = i
+
+    if d:
+        dev = d
+
+    if m:
+        # convert mask to xxx.xxx.xxx.xxx
+        mask = (0xffffffffL << (32-int(m))) & 0xffffffffL
+        mask = socket.inet_ntoa(struct.pack('!L', mask))
+
+    vds.addip(vserver, ip, dev, mask)
+
+def cmd_suspend():
+
+    parser = OptionParser(usage="%prog suspend <vserver>\n"
+                          "  Suspend <vserver>\n"
+                          "    meaning stop the vserver, insert an * in /etc/shadow for the main account\n"
+                          "    and in /etc/vservers/<vserver>/apps/init/mark so it doesnt\n"
+                          "    start on startup.")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 1:
+        parser.error("Must specify <vserver>")
+
+    vserver = args[0]
+
+    vds.suspend(vserver)
+
+def cmd_unsuspend():
+
+    parser = OptionParser(usage="%prog suspend <vserver>\n"
+                          "  Unsuspend <vserver>\n"
+                          "    meaning remove an * in /etc/shadow for the main account\n"
+                          "    and in /etc/vservers/<vserver>/apps/init/mark so it doesnt\n"
+                          "    start on startup; and start the vserver.")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 1:
+        parser.error("Must specify <vserver>")
+
+    vserver = args[0]
+
+    vds.unsuspend(vserver)
+    
+def cmd_dump():
+
+    parser = OptionParser(usage="%prog dump <vserver> <ref-path> <outfile-path>\n"
+                          "  Create a vserver dump. This dump can later be restored against the same reference.")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 3:
+        parser.error("Must specify all 3 args.")
+
+    vserver, refserver, outfile = args
+
+    if vserver[0] == '/':
+        parser.error("<vserver> should be just the name, not path")
+
+    if refserver[0] != '/':
+        parser.error("<ref-path> should be absolute path")
+
+    vds.dump(vserver, refserver, outfile)
+
+def cmd_restore():
+
+    parser = OptionParser(usage="%prog restore <dumpfile> <ref-path>\n"
+                          "  Restore a vserver from a file previously created with dump.")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify all 2 args.")
+
+    dumpfile, refserver = args
+
+
+    if refserver[0] != '/':
+        parser.error("<ref-path> should be absolute path")
+
+    vds.restore(dumpfile, refserver)
+
+def cmd_delete():
+
+    parser = OptionParser(usage="%prog delete <vserver>\n"
+                          "  Delete all traces of this vserver. (It's a good idea to dump it prior to this)")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 1:
+        parser.error("Must specify the vserver.")
+
+    vserver = args[0]
+
+    if vserver[0] == '/':
+        parser.error("<vserver> should be just the name, not path")
+
+    vds.delete(vserver)    
+
+def cmd_bwlimit():
+
+    bands = ['256kbit', '512kbit']
+    for x in range(1, 10):
+        bands.append('%dmbit' % x)
+    for x in range(10, 100, 10):
+        bands.append('%dmbit' % x)
+    for x in range(100, 1100, 100):
+        bands.append('%dmbit' % x)
+
+    parser = OptionParser(usage="%prog bwlimit <vserver> <bwlimit>\n"
+                          "  Set a bandwidth limit on <vserver> to <bwlimit>. \n"
+                          + "  Valid values are: %s" % " ".join(bands))
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify the vserver and limit.")
+
+    vserver, limit = args
+
+    if vserver[0] == '/':
+        parser.error("<vserver> should be just the name, not path")
+
+    limit = limit.lower()
+    if limit not in bands:
+        parser.error("invalid limit: %s" % limit)
+
+    vds.set_bwlimit(vserver, limit)
+    
+def cmd_fw():
+
+    parser = OptionParser(usage="%prog fw start|open|close|finish|block|clear_block <vserver> proto port [<ip>...]\n"
+                          "  XXX Not yet documented\n"
+                          "    \n")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) < 2:
+        parser.error("Not enough arguments")
+
+    command, vserver = args[0], args[1]
+    args = args[2:]
+
+    cmds = ['start', 'open', 'close', 'finish', 'clear_block', 'block']
+    if command not in cmds:
+        parser.error("Command must be on of " + ' '.join(cmds))
+
+    if command == 'start':
+        if len(args) != 1 or args[0] not in ['allow', 'block']:
+            parser.error("'start' requires default mode of 'allow' or 'block'")
+        else:
+            mode = args[0]
+            vds.fw_start(vserver, mode)
+
+    elif command in ['finish', 'clear_block']:
+        if len(args) != 0:
+            parser.error("'finish' and 'clear_block' take no arguments")
+
+        if command == 'finish':
+            vds.fw_finish(vserver)
+        elif command == 'clear_block':
+            vds.fw_clear_block(vserver)
+            
+    elif command in ['open', 'close']:
+        if len(args) < 2:
+            parser.error("'open' and 'close' require <proto> and <port>")
+        else:
+            proto, port, ips = args[0], args[1], args[2:]
+            if proto not in ['tcp', 'udp']:
+                parser.error("Invalid protocol: %s, must be 'tcp' or 'udp'" % `proto`)
+                
+            try:
+                port = int(port)
+            except ValueError:
+                parser.error("Invalid port: %s" % `port`)
+    
+            for ip in ips:
+                try:
+                    i, m = re.match('^([0-9.]*)(?:/?([1-3]?[0-9]))?$', ip).groups()
+                except:
+                    parser.error("Invalid ip specification: '%s', must be of xxx.xxx.xxx.xxx[/xx] format." % ip)
+
+                if not i:
+                    parser.error("Invalid ip specification: '%s', must be of xxx.xxx.xxx.xxx[/xx] format." % ip)
+                else:
+                    ip = i
+
+            if command == 'open':
+                vds.fw_open(vserver, proto, port, ips)
+            elif command == 'close':
+                vds.fw_close(vserver, proto, port, ips)
+                    
+    elif command == 'block':
+
+        if len(args) < 1:
+            parser.error("'block' requires at least one ip")
+            
+        ips = args
+
+        for ip in ips:
+            try:
+                i, m = re.match('^([0-9.]*)(?:/?([1-3]?[0-9]))?$', ip).groups()
+            except:
+                parser.error("Invalid ip specification: '%s', must be of xxx.xxx.xxx.xxx[/xx] format." % ip)
+
+        vds.fw_block(vserver, ips)
+
+def cmd_checkpw():
+
+    parser = OptionParser(usage="%prog checkps <vserver name> <userid>\n"
+                          "  Check the password against hash in vserver (password read from stdin, result in status code)")
+
+    (options, args) = parser.parse_args(sys.argv[2:])
+    if len(args) != 2:
+        parser.error("Must specify <vserver name> <userid>")
+
+    vserver, userid = args
+
+    passwd = sys.stdin.read() #line()[:-1]
+
+    if not vds.checkpw(vserver, userid, passwd):
+        sys.exit(os.EX_OSERR)
+    else:
+        sys.exit(os.EX_OK)
+
+########
+
+import optparse
+
+class OptionParser (optparse.OptionParser):
+
+    def check_required (self, opt):
+        option = self.get_option(opt)
+
+        # Assumes the option's 'default' is set to None!
+        if getattr(self.values, option.dest) is None:
+            self.error("%s option not supplied" % option)
+
+def main():
+
+    module = sys.modules[__name__]
+    commands = [c[4:] for c in dir(module) if c.startswith("cmd_")]
+
+    parser = OptionParser(usage = "%%prog <command> [command options]\n"                          
+                          "  Where <command> is one of: %s\n" 
+                          "  For help on a specific command, use: %%prog <command> --help\n"
+                          % " ".join(commands))
+
+    # anything after a command is not our argument
+    try:
+        cmd_idx = [sys.argv.index(arg) for arg in sys.argv if arg in commands][0]
+    except IndexError:
+        cmd_idx = 1
+
+    (options, args) = parser.parse_args(sys.argv[1:cmd_idx+1])
+
+    if not args:
+        parser.error("Please specify a command")
+
+    command = args[0]
+
+    if command not in commands:
+        parser.error("Invalid command: %s" % command)
+
+    # load config
+##     import imp
+##     global cfg
+##     cfg = imp.load_module("cfg", open(options.config), options.config, ('.py', 'U', 1))
+        
+    cmd_func = module.__dict__["cmd_"+command]
+    cmd_func()
+
+# main
+if __name__ == "__main__":
+    main()
+
+###
+# do not edit this if you like using emacs
+# makes emacs go into python mode
+### Local Variables:
+### mode:python
+### End:

@@ -1,0 +1,36 @@
+  
+  
+  <h4>Memory Utilization (1 Token = 1 average KB over 1 minute interval)</h4>
+
+  <p>
+  <table style="float: left;">
+    <tr>
+      <th></th>
+      <th>RSS tokens used</th>
+      <th>VM tokens used</th>
+    </tr>
+
+<%
+
+import locale
+locale.setlocale(locale.LC_ALL, 'en_US')
+
+for d in data:
+    # begin
+    year, month, step, rss, vm = d
+%>
+    <tr>
+      <td><%="%s %s" % (month, year) %></td>
+      <td><%="%s" % locale.format("%d", int(rss/1024)*step/60, 3) %></td>
+      <td><%="%s" % locale.format("%d", int(vm/1024)*step/60, 3) %></td>
+    </tr>
+<%
+# end
+%>
+  </table>
+
+  <p>
+  <img src="mem/graph?s=86400&l=1"><br>   
+  <img src="mem/graph?s=2592000&l=1"><br>
+  <img src="mem/graph?s=7776000"><br>
+

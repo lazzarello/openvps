@@ -1,0 +1,125 @@
+#
+# Sample OpenHosting configuration file
+#
+
+# This file must follow Python syntax. If you don't know Python,
+# don't worry about it, it's easy.
+
+# This file only lists the options that you are most likely to tweak.
+# There are more variables that you can look up in the oh/host/dft.py
+# file your Python standard lib site-packages subdirectory.
+
+# Location of the directory where vservers are. This must be mounted
+# with the tagctx option provided by the context disk limits kernel
+# patchand should probably be a separate partition.
+
+VSERVERS_ROOT = '/vservers'
+
+# Location of the backups partition. This should have plenty of
+# space, and probably should be on a separate (non-raid) drive
+
+BACKUP = '/backup'
+
+# Our main primary IP address (ssh/named/httpd will listen on it, and
+# the vservers will default to using it as the first nameserver in
+# /etc/resolv.conf)
+
+PRIMARY_IP='10.10.10.10'
+
+# Our back-end IP address if any. If your server has two nics, then
+# it's highly recommended to have a back-end network for backups and
+# other inter-server communication.
+
+BACKEND_IP = None
+
+# Ip address of the peer server to receive backups. If you don't have
+# a back-end network and a peer server, just use 127.0.0.1.
+
+PEERIP = '127.0.0.1'
+
+# default receiver of the mon heartbeats
+MON_SECRET = 'Please change me!'
+MON_TARGET_IP = '127.0.0.1'
+
+# secret for backup files (openvps dump)
+DUMP_SECRET = 'Please change me too!'
+
+# The organization name for the SSL certs. This is your company name
+# and other info.
+
+SSL_ORG_COUNTRY = "US"
+SSL_ORG_STATE = "Virginia"
+SSL_ORG_NAME = "Some Company, Inc."
+
+# Where is util-vserver?
+VSERVER_PREFIX = '/usr/local'
+
+# default domain name - the hostname for vservers will be
+# vservername + this domain
+DEFAULT_DOMAIN = 'domain.tld'
+
+# OpenVPS panel superuser - can log in to anyone's panel
+# PANEL_SUPERUSER = 'openvps'
+# superuser password (this needs to be a crypt(3) MD5 hash)
+PANEL_SUPERUSER_PW = '*' # by default disabled
+
+# Location of the directory that stores data about vservers such as
+# disk and bandwidth utilization
+
+# VAR_DB_OH = '/var/db/oh'
+
+# Default max inodes per vserever allowed
+
+# INODES_LIM = 50000
+
+# location of rrdtool
+
+# RRDTOOL = '/usr/bin/rrdtool' 
+
+# /etc/motd file for new server. You may want to add your support
+# information here.
+
+# MOTD = """
+#
+#    Welcome to your new OpenHosting Virtual Server!
+#
+# """
+
+# The initial index.html placed into the servers. This should probably
+# be a page with a link to the explanation of what to do with a new
+# server.
+
+# INDEX_HTML = """
+#    <html>
+#      <title>OpenHosting Virtual Server</title>
+#      <center>
+#         <h2>This site is under construction</h2>
+#      </center>
+#      </html>
+#      """ # keep emacs happy "
+
+# Default nice.
+
+# DFT_NICE = '9' # not as nice as default (10), but nice
+
+# services we want enabled on new vservers (everything else is
+# disabled)
+
+# FEDORA_C2_SRVCS =  ['crond', 'atd', 'httpd', 'sendmail', 'sshd',
+#                     'syslog', 'xinetd', 'webmin']
+
+# This is a list of additional packages that are installed when the
+# reference server is being built. This is a good starting point to a
+# minimalistic reference server. Of course you can (and will) also add
+# stuff to the reference server manually, so this list isn't that
+# important, since you will only build a reference server once per
+# physical machine, if that.
+
+# FEDORA_PKGS_ADDL = [ ]
+
+###
+# do not edit this if you like using emacs
+# makes emacs go into python mode
+### Local Variables:
+### mode:python
+### End:

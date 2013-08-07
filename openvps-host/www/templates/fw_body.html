@@ -1,0 +1,116 @@
+
+<h4>Firewall (Beta)</h4>
+
+<div style="text-align: center;">
+
+<form method="POST" action="fw_set" name="fw_form">
+
+<script language="javascript">
+  function set_port(n) {
+    var port_sel = document.fw_form['port_sel'+n];
+    var port = port_sel.options[port_sel.selectedIndex].value;
+    var port_field = document.fw_form['port'+n];
+    port_field.value = port;
+  }
+
+  function check_ips(ips_field) {
+    var re = new RegExp("^([0-9.]*)(?:/?([1-3]?[0-9]))?$");
+    var ips = ips_field.value.split(" ");
+    for (var i=0; i < ips.length; i++) {
+       var ip = ips[i];
+       if (ip != "") {
+         if (! ip.match(re)) {
+            alert('Invalid IP/Network: '+ip);
+            return false;
+         }
+       }
+     }
+   }
+</script>
+
+<p style="text-align: left; padding-left: 1em; border: 0; color: #708491; font-size: smaller;">
+First select the default firewall mode (ALLOW ALL or DENY ALL), then specify
+the port and protocol for the exceptions. The IPs field can be used to restrict
+a specific port to a list of space-separated IP numbers. You can also specify 
+networks here using the / notation, e.g. 10.10.10.0/24.
+</p>
+
+<p style="text-align: left;">
+<%
+if mode == 'block':
+    mode_block, mode_allow = 'checked', ''
+else:
+    mode_block, mode_allow = '', 'checked'
+# end
+%>
+      <input name="mode" type="radio" value="allow" <%=mode_allow%>><b>ALLOW ALL traffic</b>
+      <input name="mode" type="radio" value="block" <%=mode_block%>><b>DENY ALL traffic</b>
+</p>
+
+<div style="text-align:left;"><i>Except the following:</i><br></div>
+
+<table>
+  <tr>
+    <th style="width: 10em;">Port</th>
+    <th style="width: 5em;">Proto</th>
+    <th>Restrict to IPs <em>(Blank = any IP)</em></th>
+  </tr>
+<%
+for n in range(14):
+    # begin
+    proto, port, ips = '', '', ''
+
+    if n < len(rules):
+        proto, port, ips = rules[n]
+	ips = ' '.join(ips)
+    # end
+%>
+  <tr>
+    <td>
+       <select name="port_sel<%=n%>" onChange="javascript:set_port(<%=n%>)">
+<%
+    for p, s in [('', '&lt;other&gt;'), (22, 'ssh'), (80, 'http'), (443, 'https'), (25, 'smtp'), (110, 'pop'),
+                 (143, 'imap'), (993, 'imaps'), (995, 'pop3s')]:
+        if port and p == port:
+            sel = 'selected'
+        else:
+            sel = ''
+        # begin
+%>
+         <option value="<%=p%>" <%=sel%>><%=s%></option>
+<%
+    # end
+%>
+       </select>
+       <input type="text" name="port<%=n%>" value="<%=port%>" size="3">
+    </td>
+    <td>
+       <select name="proto<%=n%>">
+<%
+    if proto == 'udp':
+        tcp, udp = '', 'selected'
+    else:
+        tcp, udp = 'selected', ''
+    # end
+%>
+         <option value="tcp" <%=tcp%>>tcp</option>
+         <option value="udp" <%=udp%>>udp</option>
+       </select>
+    </td>
+    <td>
+      <input type="text" name="ips<%=n%>" value="<%=ips%>" size="40" onChange="javascript:check_ips(document.fw_form.ips<%=n%>)">
+    </td>
+  </tr>
+<%
+# end
+%>
+</table>
+
+<div style="text-align: left; padding-left: 1em; padding-top: 5px;">
+<input type="submit" value="Set the above configuration">
+</div>
+
+</form>
+
+</div>
+

@@ -1,0 +1,144 @@
+\chapter{Introduction\label{introduction}}
+
+\section{Virtual Private Servers\label{intr-vservers}}
+
+A traditional hosting provider provides disk space accessible via its
+web server to store content in the form of static HTML pages. The
+pages are typically uploaded via FTP. More advanced hosting providers
+offer additional services such as ability to run CGI scripts as well
+as mail and DNS hosting. The software running such services is
+administered by the provider with only limited (and usually
+proprietary) interface offered to the user.
+
+With the recent advances in WWW content publishing technologies, the
+popularity of LAMP (Linux, Apache, MySQL and Perl/Python/PHP) hosting
+there is a clear demand for more control by the users. Users want to
+be able to compile and install the software they are running and be
+able to configure it directly. Traditionally, this flexibility was
+only available on dedicated servers, where the user is given
+administrative (root) access and a free-range on the server, however,
+the cost of a dedicated server is often prohibitive compared to
+budgets allocated for projects. (While the cost of dedicated servers
+has declined to very low levels, the quality and reliability of such a
+server and fiscal soundness of such a provider should probably be
+questioned.)
+
+For many years now there existed an alternative solution to this
+problem, known as \dfn{Virtual Private Servers} (VPS), also often
+referred to as \dfn{Virtual Dedicated Servers} (VDS).
+
+A Virtual Private Server is a complete environment which behaves in
+nearly every respect as a dedicated server. A user may log in as root,
+start and stop daemons, add or remove users, compile software, etc,
+all without even being aware that the server is actually
+\emph{virtual}.
+
+There are several technologies currently availale to provide
+virtualization. Some are based on a software simulation of a physical
+machine (such as QEMU and Bochs), others on running a kernel in
+user-mode (UML), while others on in-kernel contextualization of
+processes (Linux VServer). 
+
+\begin{seealso}
+  \seeurl{http://www.kernelthread.com/publications/virtualization/}{``An Introduction to Virtualization'' by Amit Singh}
+  \seeurl{http://www.linux-vserver.org/}{Linux VServer Project}
+  \seeurl{http://user-mode-linux.sourceforge.net/}{User Mode Linux}
+  \seeurl{http://fabrice.bellard.free.fr/qemu/}{QEMU}
+  \seeurl{http://bochs.sourceforge.net/}{Bochs}
+\end{seealso}
+
+\section{Target Audience\label{intr-target}}
+
+Primarily, the target user-base for the OpenVPS project is web-hosting
+providers (commercial or otherwise) and users (webmasters). It is our
+hope that as the project matures, the demand for this software will
+grow from both providers and their clients as they begin to appreciate
+the advantages of shared knowledge and openness in software.
+
+\section{OpenVPS\label{intr-openvps}}
+
+While most of the aforementioned virtualization technologies solve the
+most difficult issue of the actual virtualization, taking that one
+step further to a complete, flexible and scalable hosting environment
+is still quite an undertaking. Additional requirements such as
+collection of bandwidth utilization, backups, customization, ability
+to manage virtual servers across multiple physical servers,
+maintaining software and monitoring security etc, are typically left
+as an ``exersise for the reader'' by most virtualization packages
+(while some serve to promote commercial software aimed at web
+hosters).
+
+\dfn{OpenVPS} project's goal is to provide a complete open source
+solution for hosting virtual servers. At the time of this writing, it
+is believed to be the only free and open source project to address the
+needs of hosting providers.
+
+At the initial stage of the project, OpenVPS is specific to the Linux
+operating system, using the Linux VServer project as the underlying
+virtualization technology. 
+
+The Linux VServer separates processes by assigning a \dfn{context id}
+which allows creation of virtual Linux environments with practically
+no overhead. The low overhead and therefore stellar performance
+caracteristics were the prime motivator behind selecting it as the
+base technology for OpenVPS.
+
+The OS platform is the RedHat Fedora Core Linux distribution. Because
+of the fine-grain detailed approach of OpenVPS, it does not lend
+itself to distribution-independence.
+
+At this stage of the project, OpenVPS provides the following:
+
+\begin{itemize}
+
+\item
+  Configuration of the physical server to make it suitable for
+  hosting. (Disabling of services, security tightening, etc.)
+
+\item
+  Building of a \dfn{Reference Server}. The reference server serves
+  as the starting template for all virtual servers. The reference
+  server consists of a large selection of Fedora packages chosen
+  based on applicability to a hosting environment. This list can be
+  augmented via the OpenVPS configuration file.
+
+\item
+  \dfn{Cloning} of the Reference Server. This is a process by which
+  the virtual server is created. The actual cloning means either
+  copying, hard-linking or touching a file depending on its VServer
+  flags and the OpenVPS clone rules. (The iunlink flag is part of
+  the VServer \dfn{unification} feature).
+
+\item
+  \dfn{Customization} of the newly-cloned VPS. This is where the final
+  touches are applied such as the IP, the username, passwords, SSL
+  certs and SSH keys, etc..
+
+\item
+  Accounting of VPS bandwidth using iptables and an RRD. 
+
+\item
+  Providing a WWW interface to allow viewing of real-time charts of
+  bandwidth utilization data.
+
+\item
+  Nightly backups to a local partition or an outside server.
+
+\end{itemize}
+
+\section{Prerequisites\label{intr-prereq}}
+
+The main prerequisite is a server that will be dedicated to
+hosting. The OpenVPS configuration script will insist on certain
+server configuration, esp. when it comes to sshd, httpd, named and the
+iptables, which makes it not very usable for other purposes.
+
+Since each VPS uses at least one IP address, you need access to a
+range of IP addresses. 
+
+
+
+
+
+
+

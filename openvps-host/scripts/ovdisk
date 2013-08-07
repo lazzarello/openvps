@@ -1,0 +1,105 @@
+#!/usr/bin/env python
+
+#
+# Copyright 2004 OpenHosting, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# $Id: ovdisk,v 1.4 2005/10/22 19:49:50 grisha Exp $
+
+"""
+This script periodically collects data about vservers disk
+utilization and stores it in a known place. The output is a
+runnable shell script which should be executed upon server
+bootup before any vservers are started.
+
+"""
+
+import commands
+import os
+import sys
+from syslog import syslog, openlog
+
+from openvps.host import vsutil, cfg
+
+openlog('ohdisk')
+
+def list_vserver_xids():
+
+    vservers = vsutil.list_vservers()
+
+    xids = []
+
+    for vserver in vservers:
+        xid = vservers[vserver].get('context', None)
+        if xid:
+            xids.append(xid)
+
+    return xids
+
+# are we on a vserver kernel?
+if not vsutil.is_vserver_kernel():
+    sys.exit()
+
+#servers = running_vservers()
+xids = list_vserver_xids()
+
+for xid in xids:
+
+    dl = vsutil.get_disk_limits(xid)
+    if dl:
+
+        ##### XXX begin workaround
+        # XXX is still true for vs 1.9.3 ?
+        
+        # this is because of an apparent bug in the disklimits
+        # code that somehow does not count inodes correctly
+        
+        if (int(dl['i_total']) - int(dl['i_used'])) < 10000:
+            syslog('Less than 10000 inodes left for xid %s, resetting' % xid)
+            # actually be a bit more draconian here XXX
+            open("/var/tmp/inode-overflow", "a").write('Less than 10000 inodes left for xid %s, resetting\n' % xid)
+            
+            # less then 10000 inodes left, reset
+            vsutil.set_disk_limits(xid, dl['b_used'], dl['b_total'], 0, dl['i_total'],
+                                   dl['root'], cfg.VSERVERS_ROOT)
+        #    
+        ##### XXX end workaround
+
+        # print out the current counters in the form of a readily
+        # usable command (that is then executed on server startup)
+
+
+        print 'if [ -z "`%s -V 2>&1 | grep version`" ]; then' % cfg.VDLIMIT
+        print '    # new vdlimit'
+        print '    %s --xid %s --set space_used=%s --set space_total=%s ' \
+              '--set inodes_used=%s --set inodes_total=%s --set reserved=%s %s' \
+              %  (cfg.VDLIMIT, xid, dl['b_used'], dl['b_total'], dl['i_used'], dl['i_total'],
+                  dl['root'], cfg.VSERVERS_ROOT)
+        print 'else'
+        print '    # old vdlimit'
+        print '    %s -a -x %s -S %s,%s,%s,%s,%s %s' % \
+              (cfg.VDLIMIT, xid, dl['b_used'], dl['b_total'], dl['i_used'], dl['i_total'],
+               dl['root'], cfg.VSERVERS_ROOT)
+        print 'fi'
+        
+    else:
+        print '# no limits on xid %s' % xid
+
+###
+# do not edit this if you like using emacs
+# makes emacs go into python mode
+### Local Variables:
+### mode:python
+### End:
